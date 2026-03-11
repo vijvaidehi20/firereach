@@ -86,30 +86,76 @@ async def _fetch_duckduckgo(company_name: str) -> list[str]:
     return signals
 
 
+async def _clean_signals(company_name: str, raw_signals: list[str]) -> list[str]:
+    if not raw_signals:
+        return []
+
+    client = _get_llm_client()
+    raw_text = "\n".join(f"- {s}" for s in raw_signals)
+
+    prompt = (
+        f"Rewrite these raw headlines about {company_name} as clean buyer intent signals.\n\n"
+        "Rules:\n"
+        f"- Start each signal with '{company_name}'\n"
+        "- Remove publication names like '– TechCrunch' or '- Forbes'\n"
+        "- Keep each under 12 words\n"
+        "- Return 3 to 5 signals, one per line\n"
+        "- Do NOT include any introduction, explanation, or commentary\n"
+        "- Do NOT use bullet points or numbering\n\n"
+        f"Headlines:\n{raw_text}\n\n"
+        "Signals:\n"
+    )
+
+    response = await client.aio.models.generate_content(
+        model=LLM_MODEL,
+        contents=prompt,
+        config=types.GenerateContentConfig(
+            temperature=0.2,
+            max_output_tokens=300,
+        ),
+    )
+
+    cleaned = []
+    for line in response.text.strip().split("\n"):
+        line = line.strip()
+        line = re.sub(r"^\d+[\.\)]\s*", "", line)
+        line = line.lstrip("•-* ")
+        if not line or len(line) < 10:
+            continue
+        if company_name.lower() not in line.lower():
+            continue
+        cleaned.append(line)
+
+    return cleaned[:5]
+
+
 async def tool_signal_harvester(company_name: str) -> dict:
-    signals: list[str] = []
+    raw_signals: list[str] = []
 
     logger.info("  Querying Google News RSS for %s", company_name)
-    signals.extend(await _fetch_google_news(company_name))
+    raw_signals.extend(await _fetch_google_news(company_name))
 
-    if len(signals) < 3:
+    if len(raw_signals) < 3:
         logger.info(
             "  Querying DuckDuckGo with %d targeted queries for %s",
             len(_SIGNAL_QUERIES),
             company_name,
         )
-        signals.extend(await _fetch_duckduckgo(company_name))
+        raw_signals.extend(await _fetch_duckduckgo(company_name))
 
     seen: set[str] = set()
     unique: list[str] = []
-    for s in signals:
+    for s in raw_signals:
         key = s.lower().strip()
         if key not in seen:
             seen.add(key)
             unique.append(s)
-    signals = unique[:5]
+    raw_signals = unique[:8]
 
-    logger.info("  Harvested %d signal(s) for %s", len(signals), company_name)
+    logger.info("  Cleaning %d raw signal(s) into GTM signals", len(raw_signals))
+    signals = await _clean_signals(company_name, raw_signals)
+
+    logger.info("  Harvested %d clean signal(s) for %s", len(signals), company_name)
     return {
         "company": company_name,
         "signals": signals,
@@ -122,13 +168,17 @@ async def tool_research_analyst(icp: str, signals: list[str]) -> dict:
     signals_text = "\n".join(f"- {s}" for s in signals)
 
     prompt = (
-        "You are a senior sales research analyst. Write a concise "
-        "2-paragraph account intelligence brief.\n\n"
-        "Paragraph 1: Summarise the company's current growth trajectory "
-        "based on the provided signals.\n\n"
+        "You are a senior sales research analyst. Write exactly 2 paragraphs.\n\n"
+        "Paragraph 1: Explain what these growth signals indicate about the "
+        "company's current trajectory. Be specific — reference the actual signals.\n\n"
         "Paragraph 2: Explain why a solution matching the ICP would be "
-        "relevant and timely for this company right now.\n\n"
-        "Be specific. Reference the actual signals. No fluff.\n\n"
+        "strategically relevant and timely for this company right now. "
+        "Connect the signals to a clear pain point.\n\n"
+        "Rules:\n"
+        "- Exactly 2 paragraphs, no headers or bullet points\n"
+        "- Reference specific signals by name\n"
+        "- Be concise and actionable\n"
+        "- No fluff or filler phrases\n\n"
         f"ICP: {icp}\n\n"
         f"Growth Signals:\n{signals_text}"
     )
@@ -157,13 +207,17 @@ async def tool_outreach_automated_sender(
 
     prompt = (
         "You are a world-class outreach copywriter. Write a short, "
-        "personalized cold email that:\n"
-        "1. Explicitly references at least one of the growth signals.\n"
-        "2. Feels human — not templated.\n"
-        "3. Is 120 words MAX.\n"
-        "4. Ends with a low-friction CTA.\n\n"
-        "Return ONLY the email body text, nothing else.\n\n"
-        f"Recipient: {email}\n\n"
+        "personalized cold email.\n\n"
+        "Rules:\n"
+        "1. Start with a subject line on the first line (format: Subject: ...)\n"
+        "2. Explicitly reference at least one growth signal in the opening\n"
+        "3. NO placeholders like [Name], [Company], [Your Name] — write real text\n"
+        "4. Feels human and conversational — not templated\n"
+        "5. Maximum 120 words for the body\n"
+        "6. End with a low-friction CTA (e.g. 'Would a 15-min chat be worth it?')\n"
+        "7. Sign off as 'Best, Parth' at the end\n\n"
+        "Return the complete email including subject line.\n\n"
+        f"Recipient email: {email}\n\n"
         f"Account Brief:\n{account_brief}\n\n"
         f"Growth Signals:\n{signals_text}"
     )
@@ -173,7 +227,7 @@ async def tool_outreach_automated_sender(
         contents=prompt,
         config=types.GenerateContentConfig(
             temperature=0.7,
-            max_output_tokens=300,
+            max_output_tokens=400,
         ),
     )
 

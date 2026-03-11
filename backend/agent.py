@@ -35,7 +35,7 @@ async def run_agent(icp: str, company: str, email: str) -> AgentResponse:
     account_brief = analyst_result.get("account_brief", "")
     logger.info("  → Account brief generated (%d chars)", len(account_brief))
 
-    logger.info("Step 3: Creating outreach email")
+    logger.info("Step 3: Creating personalized outreach")
     sender_result = await tool_outreach_automated_sender(
         email=email,
         account_brief=account_brief,
@@ -43,7 +43,7 @@ async def run_agent(icp: str, company: str, email: str) -> AgentResponse:
     )
     email_content = sender_result.get("email_content", "")
 
-    logger.info("Step 4: Sending email to %s", email)
+    logger.info("Step 4: Sending outreach email to %s", email)
     logger.info("  → Email sent successfully")
 
     return AgentResponse(
