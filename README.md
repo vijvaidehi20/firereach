@@ -161,3 +161,5 @@ See [DOCS.md](./DOCS.md) for full agent documentation:
 ## License
 
 MIT
+
+Resend free trial have issues, we cant send emails to any other recipient other than our own email thats why it is throwing an error
