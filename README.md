@@ -11,7 +11,7 @@ Built with **FastAPI · Gemini · Next.js · Function-Calling Architecture**
 ```
 User Input → FastAPI → Agent Loop → 3 Sequential Tools → Response
                           ↑               |
-                          └── Gemini ─────┘
+                          └── Grok ─────┘
 ```
 
 | Step | Tool                           | Type           | Purpose                              |
