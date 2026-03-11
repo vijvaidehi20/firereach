@@ -253,7 +253,7 @@ async def tool_outreach_automated_sender(
 
             # Using ThreadPoolExecutor or just running synchronously
             # smtplib is synchronous, but for a quick tool this is fine
-            server = smtplib.SMTP_SSL("smtp.gmail.com", 465)
+            server = smtplib.SMTP_SSL("smtp.gmail.com", 465, timeout=5)
             server.login(smtp_email, smtp_password)
             server.send_message(msg)
             server.quit()
