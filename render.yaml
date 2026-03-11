@@ -8,7 +8,9 @@ services:
     envVars:
       - key: GROQ_API_KEY
         sync: false
-      - key: RESEND_API_KEY
+      - key: SMTP_EMAIL
+        sync: false
+      - key: SMTP_PASSWORD
         sync: false
       - key: PYTHON_VERSION
         value: "3.12"

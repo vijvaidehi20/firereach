@@ -124,7 +124,7 @@ For the frontend, set `NEXT_PUBLIC_API_URL` if your backend is not at `http://lo
 2. Point to this repo, set root directory to `fireReach`.
 3. Build command: `pip install -r requirements.txt`
 4. Start command: `cd backend && uvicorn main:app --host 0.0.0.0 --port $PORT`
-5. Add env vars: `GROQ_API_KEY`, `RESEND_API_KEY`
+5. Add env vars: `GROQ_API_KEY`, `SMTP_EMAIL`, `SMTP_PASSWORD`
 
 ### Frontend (Vercel)
 
@@ -140,7 +140,7 @@ For the frontend, set `NEXT_PUBLIC_API_URL` if your backend is not at `http://lo
 |----------|---------------------------|
 | API      | FastAPI + Uvicorn         |
 | LLM      | Groq (llama-3.3-70b)      |
-| Email    | Resend API (HTTP 443)     |
+| Email    | Python smtplib (Gmail)    |
 | Frontend | Next.js 16 (App Router)   |
 | Schemas  | Pydantic v2               |
 | Signals  | Google News + DuckDuckGo  |

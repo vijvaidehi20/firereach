@@ -89,14 +89,6 @@ Drafts and "sends" a personalized outreach email.
 | **Execute tools in strict order** | Harvest → Analyse → Send. No skipping or reordering. |
 | **Pass data between steps unmodified** | Tool outputs flow directly into the next step without alteration. |
 
-### Backend Strategy (Python / FastAPI)
-
-1. **Lightweight Framework**: Selected FastAPI for high performance, typed validation (Pydantic), and seamless asynchronous request handling.
-2. **LLM Provider Migration**: We utilize the **Groq API** (`llama-3.3-70b-versatile`) instead of Gemini to completely avoid tight free-tier rate limits, ensuring maximum stability in production.
-3. **Agent Architecture (`agent.py` & `tools.py`)**: The system runs a 4-step linear pipeline. It logs each step explicitly using standard Python `logging`.
-4. **Signal Data Integrity**: Since LLMs can hallucinate signals, we use deterministic scrapers (Google News RSS and DuckDuckGo HTML) to pull *real* article titles first. We then use the Groq LLM purely as a formatting engine (`_clean_signals()`) to convert messy titles into clean GTM intent signals.
-5. **Real Email Dispatch (Resend API)**: The `tool_outreach_automated_sender` extracts the subject line from the generated draft and physically dispatches the email using the Resend API (HTTP 443), ensuring it bypasses strict cloud provider firewalls.
-
 ### Full System Prompt
 
 ```text
@@ -272,4 +264,5 @@ Returns `{"status": "ok", "service": "FireReach"}`.
 | Variable         | Required | Description              |
 |------------------|----------|--------------------------|
 | `GROQ_API_KEY`   | Yes      | Groq API key             |
-| `RESEND_API_KEY` | Yes      | Resend API key           |
+| `SMTP_EMAIL`     | Yes      | Gmail address for sending|
+| `SMTP_PASSWORD`  | Yes      | Gmail App Password       |
