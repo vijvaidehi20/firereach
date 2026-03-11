@@ -111,7 +111,6 @@ async def _clean_signals(company_name: str, raw_signals: list[str]) -> list[str]
         contents=prompt,
         config=types.GenerateContentConfig(
             temperature=0.2,
-            max_output_tokens=300,
         ),
     )
 
@@ -188,7 +187,6 @@ async def tool_research_analyst(icp: str, signals: list[str]) -> dict:
         contents=prompt,
         config=types.GenerateContentConfig(
             temperature=0.5,
-            max_output_tokens=500,
         ),
     )
 
@@ -227,7 +225,6 @@ async def tool_outreach_automated_sender(
         contents=prompt,
         config=types.GenerateContentConfig(
             temperature=0.7,
-            max_output_tokens=400,
         ),
     )
 
