@@ -194,8 +194,18 @@ export default function Home() {
           <div className="result-card">
             <div className="result-header">
               <span className="icon">📧</span> Outreach Email
+              {result.email_status === "failed_to_send" && (
+                <span style={{ marginLeft: "auto", fontSize: "12px", color: "#e53e3e", background: "#fed7d7", padding: "2px 8px", borderRadius: "12px" }}>
+                  Draft Only
+                </span>
+              )}
             </div>
             <div className="result-body">
+              {result.email_status === "failed_to_send" && (
+                <div style={{ background: "#fff5f5", color: "#c53030", padding: "12px", borderRadius: "6px", marginBottom: "16px", fontSize: "14px", border: "1px solid #feb2b2" }}>
+                  <strong>Could not send automatically.</strong> The server firewall blocked the SMTP port. Please copy the draft below to send manually.
+                </div>
+              )}
               <p className="email-text">{result.email_content}</p>
             </div>
           </div>

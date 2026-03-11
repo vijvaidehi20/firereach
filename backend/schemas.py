@@ -25,3 +25,4 @@ class AgentResponse(BaseModel):
     signals: List[str] = Field(default_factory=list)
     account_brief: str = ""
     email_content: str = ""
+    email_status: str = "sent"

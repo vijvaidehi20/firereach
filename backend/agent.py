@@ -42,12 +42,17 @@ async def run_agent(icp: str, company: str, email: str) -> AgentResponse:
         signals=signals,
     )
     email_content = sender_result.get("email_content", "")
+    email_status = sender_result.get("status", "sent")
 
     logger.info("Step 4: Sending outreach email to %s", email)
-    logger.info("  → Email sent successfully")
+    if email_status == "sent":
+        logger.info("  → Email sent successfully")
+    else:
+        logger.warning("  → Email failed to send, generated draft only")
 
     return AgentResponse(
         signals=signals,
         account_brief=account_brief,
         email_content=email_content,
+        email_status=email_status,
     )
