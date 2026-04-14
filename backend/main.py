@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+import json
 import logging
 import os
 import smtplib
@@ -11,6 +13,7 @@ from email.mime.text import MIMEText
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 
 from schemas import AgentRequest, AgentResponse, SendEmailRequest
 from agent import run_agent
@@ -83,6 +86,48 @@ async def run_agent_endpoint(req: AgentRequest):
     except Exception as exc:
         logger.exception("Unhandled agent error")
         raise HTTPException(status_code=500, detail=f"Agent execution failed: {exc}")
+
+
+@app.post("/run-agent-stream")
+async def run_agent_stream(req: AgentRequest):
+    queue: asyncio.Queue = asyncio.Queue()
+
+    async def on_step(step: str):
+        await queue.put({"event": "step", "step": step})
+
+    async def run():
+        try:
+            result = await run_agent(
+                icp=req.icp,
+                company=req.company,
+                email=req.email,
+                sender_name=req.sender_name,
+                sender_company=req.sender_company,
+                sender_role=req.sender_role,
+                review_first=req.review_first,
+                on_step=on_step,
+            )
+            await queue.put({"event": "done", "result": result.model_dump()})
+        except Exception as exc:
+            logger.exception("Stream agent error")
+            await queue.put({"event": "error", "detail": str(exc)})
+        finally:
+            await queue.put(None)
+
+    asyncio.create_task(run())
+
+    async def event_stream():
+        while True:
+            item = await queue.get()
+            if item is None:
+                break
+            yield f"data: {json.dumps(item)}\n\n"
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
 
 
 @app.post("/send-email")

@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+from collections.abc import Awaitable, Callable
 
 from groq import AsyncGroq
 
@@ -113,6 +114,7 @@ async def run_agent(
     sender_company: str = "",
     sender_role: str = "",
     review_first: bool = False,
+    on_step: Callable[[str], Awaitable[None]] | None = None,
 ) -> AgentResponse:
     api_key = os.getenv("GROQ_API_KEY")
     if not api_key:
@@ -182,6 +184,15 @@ async def run_agent(
             fn_args = json.loads(tool_call.function.arguments)
 
             logger.info("Agent calling: %s  args=%s", fn_name, list(fn_args.keys()))
+
+            if on_step:
+                step_map = {
+                    "tool_signal_harvester": "signals",
+                    "tool_research_analyst": "research",
+                    "tool_outreach_automated_sender": "compose",
+                }
+                if fn_name in step_map:
+                    await on_step(step_map[fn_name])
 
             if fn_name == "tool_research_analyst" and wiki_facts:
                 fn_args.setdefault("wiki_facts", wiki_facts)

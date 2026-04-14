@@ -396,6 +396,46 @@ export default function Home() {
   const canSubmit = form.icp.trim() &&
     (batchMode ? batchCompanies.trim() : form.company.trim() && form.email.trim());
 
+  async function runSingleStream(company, email, onStep) {
+    const res = await fetch(`${API_URL}/run-agent-stream`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        icp: form.icp,
+        company,
+        email,
+        sender_name:    persona.sender_name    || "Parth",
+        sender_company: persona.sender_company || "",
+        sender_role:    persona.sender_role    || "",
+        review_first: reviewFirst,
+      }),
+    });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      throw new Error(body.detail || `Request failed (${res.status})`);
+    }
+
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split("\n");
+      buffer = lines.pop();
+      for (const line of lines) {
+        if (!line.startsWith("data: ")) continue;
+        const msg = JSON.parse(line.slice(6));
+        if (msg.event === "step") onStep(msg.step);
+        if (msg.event === "done") return msg.result;
+        if (msg.event === "error") throw new Error(msg.detail);
+      }
+    }
+    throw new Error("Stream ended without a result.");
+  }
+
   async function runSingle(company, email) {
     const res = await fetch(`${API_URL}/run-agent`, {
       method: "POST",
@@ -453,20 +493,17 @@ export default function Home() {
       }
       setActiveStep(3);
     } else {
-      const t1 = setTimeout(() => setActiveStep(1), 2500);
-      const t2 = setTimeout(() => setActiveStep(2), 6000);
-      setActiveStep(0);
+      const STEP_INDEX = { signals: 0, research: 1, compose: 2 };
       try {
-        const data = await runSingle(form.company, form.email);
+        const data = await runSingleStream(form.company, form.email, (step) => {
+          setActiveStep(STEP_INDEX[step] ?? 0);
+        });
         setActiveStep(3);
         setResult(data);
         addToHistory({ id: Date.now(), company: form.company, email: form.email, timestamp: new Date().toISOString(), ...data });
       } catch (err) {
         setError(err.message || "Something went wrong. Is the backend running?");
         setActiveStep(-1);
-      } finally {
-        clearTimeout(t1);
-        clearTimeout(t2);
       }
     }
 
