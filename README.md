@@ -24,7 +24,7 @@ The agent uses Groq's function calling API. The LLM decides which tool to call a
 
 ## Features
 
-- **Live signal harvesting** — Google News RSS, DuckDuckGo, Reddit JSON API, GitHub public org API, Wikipedia summary API
+- **Live signal harvesting** — Google News RSS, DuckDuckGo, Reddit JSON API, GitHub public org API, LinkedIn job postings (via DuckDuckGo index), Wikipedia summary API
 - **Smart ICP adaptation** — AI rewrites your base ICP into a company-specific value proposition based on live signals
 - **Batch mode** — run the full pipeline against multiple companies at once, each with their own recipient email
 - **Review before sending** — generate a draft first, edit it, then send
@@ -120,7 +120,7 @@ fireReach/
 | Email dispatch | smtplib — Gmail SMTP with STARTTLS |
 | Frontend | Next.js 15 (App Router) |
 | Schemas | Pydantic v2 |
-| Signal sources | Google News · DuckDuckGo · Reddit · GitHub · Wikipedia |
+| Signal sources | Google News · DuckDuckGo · Reddit · GitHub · LinkedIn · Wikipedia |
 
 ---
 

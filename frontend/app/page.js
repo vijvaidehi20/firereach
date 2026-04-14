@@ -16,6 +16,7 @@ const SOURCE_COLORS = {
   "DuckDuckGo":  "badge-purple",
   "Reddit":      "badge-warning",
   "GitHub":      "badge-success",
+  "LinkedIn":    "badge-blue",
 };
 
 const DEFAULT_PERSONA = { sender_name: "Parth", sender_company: "", sender_role: "" };

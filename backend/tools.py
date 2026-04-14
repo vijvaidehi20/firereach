@@ -132,6 +132,29 @@ async def _fetch_github(company_name: str) -> tuple[list[str], list[str]]:
     return signals, sources
 
 
+async def _fetch_linkedin(company_name: str) -> tuple[list[str], list[str]]:
+    signals: list[str] = []
+    sources: list[str] = []
+    try:
+        async with httpx.AsyncClient(timeout=10) as http:
+            resp = await http.get(
+                f"https://html.duckduckgo.com/html/?q={company_name}+site:linkedin.com/jobs",
+                headers={"User-Agent": "Mozilla/5.0 (FireReach Bot)"},
+            )
+            if resp.status_code == 200:
+                snippets = re.findall(
+                    r'class="result__snippet">(.*?)</a>', resp.text, re.DOTALL
+                )
+                for snippet in snippets[:3]:
+                    clean = re.sub(r"<.*?>", "", snippet).strip()
+                    if clean and len(clean) > 20:
+                        signals.append(clean)
+                        sources.append("LinkedIn")
+    except Exception as exc:
+        logger.debug("LinkedIn fetch failed: %s", exc)
+    return signals, sources
+
+
 async def _fetch_wikipedia(company_name: str) -> str:
     try:
         async with httpx.AsyncClient(timeout=8) as http:
@@ -207,6 +230,9 @@ async def tool_signal_harvester(company_name: str) -> dict:
     logger.info("  Querying GitHub for %s", company_name)
     gh_sigs, gh_srcs = await _fetch_github(company_name)
 
+    logger.info("  Querying LinkedIn for %s", company_name)
+    li_sigs, li_srcs = await _fetch_linkedin(company_name)
+
     seen: set[str] = set()
     unique_raw, unique_srcs = [], []
     for s, src in zip(all_raw, all_raw_sources):
@@ -221,7 +247,7 @@ async def tool_signal_harvester(company_name: str) -> dict:
     logger.info("  Cleaning %d raw signal(s)", len(unique_raw))
     cleaned = await _clean_signals(company_name, unique_raw)
 
-    for s, src in zip(gh_sigs, gh_srcs):
+    for s, src in zip(gh_sigs + li_sigs, gh_srcs + li_srcs):
         if s.lower() not in seen and len(cleaned) < 5:
             seen.add(s.lower())
             cleaned.append(s)
@@ -230,7 +256,7 @@ async def tool_signal_harvester(company_name: str) -> dict:
     cleaned = cleaned[:5]
 
     sources_used: list[str] = []
-    for src in unique_srcs + gh_srcs:
+    for src in unique_srcs + gh_srcs + li_srcs:
         if src not in sources_used:
             sources_used.append(src)
 
