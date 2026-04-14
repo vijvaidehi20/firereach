@@ -1,14 +1,18 @@
 from __future__ import annotations
 
 import logging
+import os
+import smtplib
 import time
 from contextlib import asynccontextmanager
+from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
-from schemas import AgentRequest, AgentResponse
+from schemas import AgentRequest, AgentResponse, SendEmailRequest
 from agent import run_agent
 
 load_dotenv()
@@ -22,16 +26,16 @@ logger = logging.getLogger("firereach")
 
 
 @asynccontextmanager
-async def lifespan(app: FastAPI):
-    logger.info("🔥 FireReach agent is online")
+async def lifespan(_app: FastAPI):
+    logger.info("FireReach agent is online")
     yield
-    logger.info("🔥 FireReach shutting down")
+    logger.info("FireReach shutting down")
 
 
 app = FastAPI(
     title="FireReach",
-    description="Autonomous outreach engine – research a company, generate a personalised cold email.",
-    version="0.1.0",
+    description="Autonomous outreach engine — research a company, generate and send a personalized cold email.",
+    version="1.0.0",
     lifespan=lifespan,
 )
 
@@ -52,9 +56,8 @@ async def health():
 @app.post("/run-agent", response_model=AgentResponse)
 async def run_agent_endpoint(req: AgentRequest):
     logger.info(
-        "▶ /run-agent called  |  company=%s  email=%s",
-        req.company,
-        req.email,
+        "/run-agent  company=%s  email=%s  review_first=%s",
+        req.company, req.email, req.review_first,
     )
     start = time.perf_counter()
 
@@ -63,15 +66,14 @@ async def run_agent_endpoint(req: AgentRequest):
             icp=req.icp,
             company=req.company,
             email=req.email,
+            sender_name=req.sender_name,
+            sender_company=req.sender_company,
+            sender_role=req.sender_role,
+            review_first=req.review_first,
         )
-
-        elapsed = time.perf_counter() - start
         logger.info(
-            "✅ Agent finished in %.1fs  |  signals=%d  brief_len=%d  email_len=%d",
-            elapsed,
-            len(result.signals),
-            len(result.account_brief),
-            len(result.email_content),
+            "Done in %.1fs  signals=%d  status=%s",
+            time.perf_counter() - start, len(result.signals), result.email_status,
         )
         return result
 
@@ -80,7 +82,33 @@ async def run_agent_endpoint(req: AgentRequest):
         raise HTTPException(status_code=500, detail=str(exc))
     except Exception as exc:
         logger.exception("Unhandled agent error")
-        raise HTTPException(
-            status_code=500,
-            detail=f"Agent execution failed: {exc}",
-        )
+        raise HTTPException(status_code=500, detail=f"Agent execution failed: {exc}")
+
+
+@app.post("/send-email")
+async def send_email_endpoint(req: SendEmailRequest):
+    smtp_email = os.getenv("SMTP_EMAIL")
+    smtp_password = os.getenv("SMTP_PASSWORD")
+
+    if not smtp_email or not smtp_password:
+        raise HTTPException(status_code=500, detail="SMTP credentials not configured.")
+
+    try:
+        msg = MIMEMultipart("alternative")
+        msg["Subject"] = req.subject
+        msg["From"] = smtp_email
+        msg["To"] = req.recipient
+        msg.attach(MIMEText(req.body, "plain"))
+
+        with smtplib.SMTP("smtp.gmail.com", 587) as server:
+            server.ehlo()
+            server.starttls()
+            server.login(smtp_email, smtp_password)
+            server.sendmail(smtp_email, req.recipient, msg.as_string())
+
+        logger.info("Email sent to %s", req.recipient)
+        return {"status": "sent"}
+
+    except Exception as exc:
+        logger.error("SMTP send failed: %s", exc)
+        raise HTTPException(status_code=500, detail=f"SMTP send failed: {exc}")

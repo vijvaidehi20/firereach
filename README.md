@@ -1,63 +1,83 @@
-# FireReach 🔥
+# FireReach
 
-**Autonomous signal-driven outreach engine** — captures live buyer signals for a company, reasons through them against your ICP, and automatically sends a hyper-personalized cold email.
+Autonomous signal-driven outreach engine. Captures live buyer signals for a target company, reasons through them against your ICP, and sends a hyper-personalized cold email — all in one agent loop.
 
-Built with **FastAPI · Gemini · Next.js · Function-Calling Architecture**
-
----
-
-## Architecture
-
-```
-User Input → FastAPI → Agent Loop → 3 Sequential Tools → Response
-                          ↑               |
-                          └── Grok ─────┘
-```
-
-| Step | Tool                           | Type           | Purpose                              |
-|------|--------------------------------|----------------|--------------------------------------|
-| 1    | `tool_signal_harvester`        | Deterministic  | Fetch live growth signals (no LLM)   |
-| 2    | `tool_research_analyst`        | LLM reasoning  | Generate 2-paragraph account brief   |
-| 3    | `tool_outreach_automated_sender` | LLM + dispatch | Write & "send" personalized email  |
+Built with **FastAPI · Groq (Llama 3.3) · Next.js · Groq Function Calling**
 
 ---
 
-## Quick Start
+## How it works
+
+```
+User Input → FastAPI → Agent Loop (Groq function calling) → 3 Tools → Email Sent
+```
+
+The agent uses Groq's function calling API. The LLM decides which tool to call and passes arguments; the backend executes each tool and feeds results back into the conversation until the full pipeline completes.
+
+| Step | Tool | What it does |
+|------|------|--------------|
+| 1 | `tool_signal_harvester` | Fetches live growth signals from Google News, DuckDuckGo, Reddit, GitHub, and Wikipedia — no LLM involved |
+| 2 | `tool_research_analyst` | Adapts your base ICP to this specific company's signals and writes a 2-paragraph account brief |
+| 3 | `tool_outreach_automated_sender` | Writes a personalized cold email using the adapted ICP and sends it via SMTP |
+
+---
+
+## Features
+
+- **Live signal harvesting** — Google News RSS, DuckDuckGo, Reddit JSON API, GitHub public org API, Wikipedia summary API
+- **Smart ICP adaptation** — AI rewrites your base ICP into a company-specific value proposition based on live signals
+- **Batch mode** — run the full pipeline against multiple companies at once, each with their own recipient email
+- **Review before sending** — generate a draft first, edit it, then send
+- **Editable email** — modify the generated email directly in the browser before dispatch
+- **Copy / Export** — copy to clipboard or download as `.txt`
+- **Run history** — last 15 runs saved to localStorage, click any to restore
+- **Sender persona** — configure your name, company, and role; persisted in the browser
+- **Source badges** — each signal is tagged with the source it came from
+
+---
+
+## Quick start
 
 ### Prerequisites
 
 - Python 3.10+
 - Node.js 18+
-- [Gemini API key](https://aistudio.google.com/) (free)
+- [Groq API key](https://console.groq.com/) (free tier is sufficient)
+- Gmail account with an [App Password](https://myaccount.google.com/apppasswords) enabled
 
-### 1. Clone & setup backend
+### 1. Clone and set up the backend
 
 ```bash
 cd fireReach
 
-# Create virtual environment
 python -m venv venv
-source venv/bin/activate        # macOS/Linux
-# venv\Scripts\activate          # Windows
+source venv/bin/activate       # macOS / Linux
+# venv\Scripts\activate         # Windows
 
 pip install -r requirements.txt
 ```
 
-### 2. Configure environment
+### 2. Configure environment variables
 
 ```bash
-cp .env.example .env
-# Edit .env and add your GROQ_API_KEY, SMTP_EMAIL, and SMTP_PASSWORD
+cp .env.example backend/.env
+# Fill in your keys in backend/.env
 ```
 
-### 3. Start backend
+| Variable | Description |
+|----------|-------------|
+| `GROQ_API_KEY` | From [console.groq.com](https://console.groq.com/) |
+| `SMTP_EMAIL` | Your Gmail address |
+| `SMTP_PASSWORD` | Gmail App Password (not your account password) |
+
+### 3. Start the backend
 
 ```bash
 cd backend
 uvicorn main:app --reload --port 8000
 ```
 
-### 4. Start frontend
+### 4. Start the frontend
 
 ```bash
 cd frontend
@@ -65,109 +85,42 @@ npm install
 npm run dev
 ```
 
-Open **http://localhost:3000** → fill in Company, Email, ICP → hit **Run FireReach Agent**.
-
-### 5. Test via curl (optional)
-
-```bash
-curl -X POST http://localhost:8000/run-agent \
-  -H "Content-Type: application/json" \
-  -d '{
-    "icp": "We sell high-end cybersecurity training to Series B startups",
-    "company": "Snyk",
-    "email": "candidate@example.com"
-  }'
-```
+Open **http://localhost:3000**, fill in the form, and hit **Run Agent**.
 
 ---
 
-## Project Structure
+## Project structure
 
 ```
 fireReach/
 ├── backend/
-│   ├── main.py          # FastAPI app & /run-agent endpoint
-│   ├── agent.py          # Sequential agent loop (3 tool calls)
-│   ├── tools.py          # Tool definitions + implementations
-│   ├── prompts.py        # System & user prompt templates
-│   └── schemas.py        # Pydantic request/response models
+│   ├── main.py       # FastAPI app — /run-agent and /send-email endpoints
+│   ├── agent.py      # Agentic loop with Groq function calling
+│   ├── tools.py      # Tool implementations: harvester, analyst, sender
+│   ├── prompts.py    # System prompt and user prompt builder
+│   └── schemas.py    # Pydantic request / response models
 ├── frontend/
 │   └── app/
-│       ├── layout.js     # Root layout + metadata
-│       ├── page.js       # Main UI (form → results)
-│       └── globals.css   # Dark theme design system
+│       ├── layout.js    # Root layout and metadata
+│       ├── page.js      # Full UI — form, results, history, batch mode
+│       └── globals.css  # Design system (Apple dark theme)
 ├── .env.example
 ├── requirements.txt
-├── DOCS.md               # Full agent documentation
 └── README.md
 ```
 
 ---
 
-## Environment Variables
+## Tech stack
 
-| Variable         | Required | Description                                           |
-|------------------|----------|-------------------------------------------------------|
-| `GROQ_API_KEY`   | Yes      | Groq API key for LLM generation ([get free](https://console.groq.com/)) |
-| `SMTP_EMAIL`     | Yes      | Gmail address used for sending automated outreach emails |
-| `SMTP_PASSWORD`  | Yes      | Gmail App Password (not normal password) for SMTP dispatch |
-
-For the frontend, set `NEXT_PUBLIC_API_URL` if your backend is not at `http://localhost:8000`.
-
----
-
-## Deployment
-
-### Backend (Render)
-
-1. Create a new **Web Service** on [render.com](https://render.com).
-2. Point to this repo, set root directory to `fireReach`.
-3. Build command: `pip install -r requirements.txt`
-4. Start command: `cd backend && uvicorn main:app --host 0.0.0.0 --port $PORT`
-5. Add env vars: `GROQ_API_KEY`, `RESEND_API_KEY`
-
-### Frontend (Vercel)
-
-1. Import repo on [vercel.com](https://vercel.com).
-2. Set root directory to `fireReach/frontend`.
-3. Add env var: `NEXT_PUBLIC_API_URL=https://your-render-url.onrender.com`
-
----
-
-## Tech Stack
-
-| Layer    | Technology                |
-|----------|---------------------------|
-| API      | FastAPI + Uvicorn         |
-| LLM      | Groq (llama-3.3-70b)      |
-| Email    | Resend API (HTTP 443)     |
-| Frontend | Next.js 16 (App Router)   |
-| Schemas  | Pydantic v2               |
-| Signals  | Google News + DuckDuckGo  |
-
----
-
-## Documentation
-
-See [DOCS.md](./DOCS.md) for full agent documentation:
-- Logic flow & signal grounding
-- Tool schemas with input/output specs
-- System prompt & constraints
-- Example run with Snyk
-- Architecture diagram
-
----
-
----
-
-## ⚠️ Important Note on Email Dispatch (Deployment)
-
-If you deploy this application to **Render's Free Tier**, the automated email dispatch step may fail or timeout. 
-This is because Render (and many other cloud providers) strictly block outbound SMTP traffic (port 465/587) on free plans to prevent spam.
-
-We attempted to mitigate this using the **Resend API**, but Resend's free tier currently carries its own strict limitation: you can only send emails to the *exact email address you used to verify the account*. Therefore, dynamic outreach to arbitrary prospects will fail `HTTP 403` on a free Resend account without verified domains.
-
-**Current Fallback:** If the backend detects a blocked port or API limitation during the email dispatch step, it will gracefully catch the error and return the drafted email directly to the frontend UI, instructing the user to copy/paste and send it manually.
+| Layer | Technology |
+|-------|------------|
+| API | FastAPI + Uvicorn |
+| LLM | Groq — llama-3.3-70b-versatile |
+| Email dispatch | smtplib — Gmail SMTP with STARTTLS |
+| Frontend | Next.js 15 (App Router) |
+| Schemas | Pydantic v2 |
+| Signal sources | Google News · DuckDuckGo · Reddit · GitHub · Wikipedia |
 
 ---
 

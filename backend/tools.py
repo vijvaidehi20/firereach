@@ -13,6 +13,14 @@ logger = logging.getLogger("firereach.tools")
 _llm_client: AsyncGroq | None = None
 LLM_MODEL = "llama-3.3-70b-versatile"
 
+_SIGNAL_QUERIES = [
+    "{company} funding",
+    "{company} hiring",
+    "{company} expansion",
+    "{company} leadership change",
+    "{company} product launch",
+]
+
 
 def _get_llm_client() -> AsyncGroq:
     global _llm_client
@@ -27,17 +35,9 @@ def _get_llm_client() -> AsyncGroq:
     return _llm_client
 
 
-_SIGNAL_QUERIES = [
-    "{company} funding",
-    "{company} hiring",
-    "{company} expansion",
-    "{company} leadership change",
-    "{company} product launch",
-]
-
-
-async def _fetch_google_news(company_name: str) -> list[str]:
+async def _fetch_google_news(company_name: str) -> tuple[list[str], list[str]]:
     signals: list[str] = []
+    sources: list[str] = []
     try:
         async with httpx.AsyncClient(timeout=10) as http:
             rss_url = (
@@ -52,37 +52,101 @@ async def _fetch_google_news(company_name: str) -> list[str]:
                     cleaned = title.strip()
                     if cleaned and company_name.lower() in cleaned.lower():
                         signals.append(cleaned)
+                        sources.append("Google News")
     except Exception as exc:
         logger.debug("Google News RSS failed: %s", exc)
-    return signals
+    return signals, sources
 
 
-async def _fetch_duckduckgo(company_name: str) -> list[str]:
+async def _fetch_duckduckgo(company_name: str) -> tuple[list[str], list[str]]:
     signals: list[str] = []
+    sources: list[str] = []
     try:
         async with httpx.AsyncClient(timeout=10) as http:
             for query_template in _SIGNAL_QUERIES:
                 query = query_template.format(company=company_name)
-                ddg_url = f"https://html.duckduckgo.com/html/?q={query}"
                 resp = await http.get(
-                    ddg_url,
+                    f"https://html.duckduckgo.com/html/?q={query}",
                     headers={"User-Agent": "Mozilla/5.0 (FireReach Bot)"},
                 )
                 if resp.status_code == 200:
                     snippets = re.findall(
-                        r'class="result__snippet">(.*?)</a>',
-                        resp.text,
-                        re.DOTALL,
+                        r'class="result__snippet">(.*?)</a>', resp.text, re.DOTALL
                     )
                     for snippet in snippets[:2]:
                         clean = re.sub(r"<.*?>", "", snippet).strip()
                         if clean and len(clean) > 20:
                             signals.append(clean)
+                            sources.append("DuckDuckGo")
                 if len(signals) >= 5:
                     break
     except Exception as exc:
         logger.debug("DuckDuckGo scrape failed: %s", exc)
-    return signals
+    return signals, sources
+
+
+async def _fetch_reddit(company_name: str) -> tuple[list[str], list[str]]:
+    signals: list[str] = []
+    sources: list[str] = []
+    try:
+        async with httpx.AsyncClient(timeout=10) as http:
+            resp = await http.get(
+                "https://www.reddit.com/search.json",
+                params={"q": company_name, "sort": "new", "limit": 5, "type": "link"},
+                headers={"User-Agent": "FireReach/1.0 (signal harvester)"},
+            )
+            if resp.status_code == 200:
+                data = resp.json()
+                for post in data.get("data", {}).get("children", [])[:5]:
+                    title = post["data"].get("title", "")
+                    if company_name.lower() in title.lower() and len(title) > 20:
+                        signals.append(title)
+                        sources.append("Reddit")
+    except Exception as exc:
+        logger.debug("Reddit fetch failed: %s", exc)
+    return signals, sources
+
+
+async def _fetch_github(company_name: str) -> tuple[list[str], list[str]]:
+    signals: list[str] = []
+    sources: list[str] = []
+    try:
+        slug = re.sub(r"[^a-z0-9-]", "", company_name.lower().replace(" ", "-"))
+        async with httpx.AsyncClient(
+            timeout=10,
+            headers={"User-Agent": "FireReach/1.0", "Accept": "application/vnd.github+json"},
+        ) as http:
+            resp = await http.get(f"https://api.github.com/orgs/{slug}")
+            if resp.status_code == 200:
+                data = resp.json()
+                pub_repos = data.get("public_repos", 0)
+                followers = data.get("followers", 0)
+                if pub_repos > 0:
+                    signals.append(f"{company_name} has {pub_repos} public repositories on GitHub")
+                    sources.append("GitHub")
+                if followers > 50:
+                    signals.append(f"{company_name} GitHub org has {followers:,} followers")
+                    sources.append("GitHub")
+    except Exception as exc:
+        logger.debug("GitHub fetch failed: %s", exc)
+    return signals, sources
+
+
+async def _fetch_wikipedia(company_name: str) -> str:
+    try:
+        async with httpx.AsyncClient(timeout=8) as http:
+            resp = await http.get(
+                f"https://en.wikipedia.org/api/rest_v1/page/summary/{company_name}",
+                headers={"User-Agent": "FireReach/1.0"},
+            )
+            if resp.status_code == 200:
+                data = resp.json()
+                extract = data.get("extract", "")
+                sentences = [s.strip() for s in extract.split(". ") if s.strip()]
+                return ". ".join(sentences[:3]) + "." if sentences else ""
+    except Exception as exc:
+        logger.debug("Wikipedia fetch failed: %s", exc)
+    return ""
 
 
 async def _clean_signals(company_name: str, raw_signals: list[str]) -> list[str]:
@@ -101,8 +165,7 @@ async def _clean_signals(company_name: str, raw_signals: list[str]) -> list[str]
         "- Return 3 to 5 signals, one per line\n"
         "- Do NOT include any introduction, explanation, or commentary\n"
         "- Do NOT use bullet points or numbering\n\n"
-        f"Headlines:\n{raw_text}\n\n"
-        "Signals:\n"
+        f"Headlines:\n{raw_text}\n\nSignals:\n"
     )
 
     response = await client.chat.completions.create(
@@ -115,69 +178,104 @@ async def _clean_signals(company_name: str, raw_signals: list[str]) -> list[str]
     cleaned = []
     text = response.choices[0].message.content or ""
     for line in text.strip().split("\n"):
-        line = line.strip()
-        line = re.sub(r"^\d+[\.\)]\s*", "", line)
-        line = line.lstrip("•-* ")
-        if not line or len(line) < 10:
-            continue
-        if company_name.lower() not in line.lower():
-            continue
-        cleaned.append(line)
-
+        line = re.sub(r"^\d+[\.\)]\s*", "", line.strip()).lstrip("•-* ")
+        if len(line) >= 10 and company_name.lower() in line.lower():
+            cleaned.append(line)
     return cleaned[:5]
 
 
 async def tool_signal_harvester(company_name: str) -> dict:
-    raw_signals: list[str] = []
+    all_raw: list[str] = []
+    all_raw_sources: list[str] = []
 
-    logger.info("  Querying Google News RSS for %s", company_name)
-    raw_signals.extend(await _fetch_google_news(company_name))
+    logger.info("  Querying Google News for %s", company_name)
+    sigs, srcs = await _fetch_google_news(company_name)
+    all_raw.extend(sigs)
+    all_raw_sources.extend(srcs)
 
-    if len(raw_signals) < 3:
-        logger.info(
-            "  Querying DuckDuckGo with %d targeted queries for %s",
-            len(_SIGNAL_QUERIES),
-            company_name,
-        )
-        raw_signals.extend(await _fetch_duckduckgo(company_name))
+    if len(all_raw) < 3:
+        logger.info("  Querying DuckDuckGo for %s", company_name)
+        sigs, srcs = await _fetch_duckduckgo(company_name)
+        all_raw.extend(sigs)
+        all_raw_sources.extend(srcs)
+
+    logger.info("  Querying Reddit for %s", company_name)
+    sigs, srcs = await _fetch_reddit(company_name)
+    all_raw.extend(sigs)
+    all_raw_sources.extend(srcs)
+
+    logger.info("  Querying GitHub for %s", company_name)
+    gh_sigs, gh_srcs = await _fetch_github(company_name)
 
     seen: set[str] = set()
-    unique: list[str] = []
-    for s in raw_signals:
+    unique_raw, unique_srcs = [], []
+    for s, src in zip(all_raw, all_raw_sources):
         key = s.lower().strip()
         if key not in seen:
             seen.add(key)
-            unique.append(s)
-    raw_signals = unique[:8]
+            unique_raw.append(s)
+            unique_srcs.append(src)
 
-    logger.info("  Cleaning %d raw signal(s) into GTM signals", len(raw_signals))
-    signals = await _clean_signals(company_name, raw_signals)
+    unique_raw = unique_raw[:8]
 
-    logger.info("  Harvested %d clean signal(s) for %s", len(signals), company_name)
+    logger.info("  Cleaning %d raw signal(s)", len(unique_raw))
+    cleaned = await _clean_signals(company_name, unique_raw)
+
+    for s, src in zip(gh_sigs, gh_srcs):
+        if s.lower() not in seen and len(cleaned) < 5:
+            seen.add(s.lower())
+            cleaned.append(s)
+            unique_srcs.append(src)
+
+    cleaned = cleaned[:5]
+
+    sources_used: list[str] = []
+    for src in unique_srcs + gh_srcs:
+        if src not in sources_used:
+            sources_used.append(src)
+
+    logger.info("  %d signal(s) from: %s", len(cleaned), ", ".join(sources_used) or "web")
+
+    logger.info("  Fetching Wikipedia facts for %s", company_name)
+    wiki_facts = await _fetch_wikipedia(company_name)
+
     return {
         "company": company_name,
-        "signals": signals,
+        "signals": cleaned,
+        "sources_used": sources_used,
+        "wiki_facts": wiki_facts,
     }
 
 
-async def tool_research_analyst(icp: str, signals: list[str]) -> dict:
+async def tool_research_analyst(
+    icp: str,
+    signals: list[str],
+    wiki_facts: str = "",
+) -> dict:
     client = _get_llm_client()
 
     signals_text = "\n".join(f"- {s}" for s in signals)
+    wiki_section = f"\nCompany Background: {wiki_facts}\n" if wiki_facts else ""
 
     prompt = (
-        "You are a senior sales research analyst. Write exactly 2 paragraphs.\n\n"
-        "Paragraph 1: Explain what these growth signals indicate about the "
-        "company's current trajectory. Be specific — reference the actual signals.\n\n"
-        "Paragraph 2: Explain why a solution matching the ICP would be "
-        "strategically relevant and timely for this company right now. "
-        "Connect the signals to a clear pain point.\n\n"
+        "You are a senior sales research analyst. Do two things:\n\n"
+        "PART 1 — Adapted ICP:\n"
+        "Rewrite the base ICP into a single sharp sentence tailored specifically to this "
+        "company's current signals. Make it feel timely, not generic.\n\n"
+        "PART 2 — Account Brief:\n"
+        "Write exactly 2 paragraphs:\n"
+        "Paragraph 1: What these growth signals reveal about the company's trajectory. "
+        "Reference the actual signals by name.\n"
+        "Paragraph 2: Why the adapted ICP solution is strategically relevant right now. "
+        "Connect signals to a clear pain point.\n\n"
+        "Output format — use these exact labels:\n"
+        "ADAPTED ICP: <one sentence>\n\n"
+        "ACCOUNT BRIEF:\n<paragraph 1>\n\n<paragraph 2>\n\n"
         "Rules:\n"
-        "- Exactly 2 paragraphs, no headers or bullet points\n"
-        "- Reference specific signals by name\n"
-        "- Be concise and actionable\n"
-        "- No fluff or filler phrases\n\n"
-        f"ICP: {icp}\n\n"
+        "- No headers, bullets, or filler phrases\n"
+        "- Be concise and actionable\n\n"
+        f"Base ICP: {icp}\n"
+        f"{wiki_section}"
         f"Growth Signals:\n{signals_text}"
     )
 
@@ -185,40 +283,64 @@ async def tool_research_analyst(icp: str, signals: list[str]) -> dict:
         model=LLM_MODEL,
         messages=[{"role": "user", "content": prompt}],
         temperature=0.5,
-        max_tokens=500,
+        max_tokens=600,
     )
 
-    account_brief = response.choices[0].message.content or ""
-    return {"account_brief": account_brief.strip()}
+    text = (response.choices[0].message.content or "").strip()
 
+    adapted_icp = icp
+    account_brief = text
 
-from email.message import EmailMessage
-import smtplib
+    adapted_match = re.search(r"ADAPTED ICP:\s*(.+?)(?:\n|$)", text)
+    brief_match = re.search(r"ACCOUNT BRIEF:\s*\n([\s\S]+)", text)
+
+    if adapted_match:
+        adapted_icp = adapted_match.group(1).strip()
+    if brief_match:
+        account_brief = brief_match.group(1).strip()
+
+    logger.info("  Adapted ICP: %s", adapted_icp[:80])
+    return {"adapted_icp": adapted_icp, "account_brief": account_brief}
+
 
 async def tool_outreach_automated_sender(
     email: str,
     account_brief: str,
     signals: list[str],
+    adapted_icp: str = "",
+    sender_name: str = "Parth",
+    sender_company: str = "",
+    sender_role: str = "",
+    send_immediately: bool = True,
 ) -> dict:
     client = _get_llm_client()
 
     signals_text = "\n".join(f"- {s}" for s in signals)
 
+    sign_off = f"Best regards,\n{sender_name}"
+    if sender_role and sender_company:
+        sign_off += f"\n{sender_role}\n{sender_company}"
+    elif sender_role:
+        sign_off += f"\n{sender_role}"
+    elif sender_company:
+        sign_off += f"\n{sender_company}"
+
+    icp_line = f"Value Proposition: {adapted_icp}\n\n" if adapted_icp else ""
+
     prompt = (
-        "You are a world-class outreach copywriter. Write a short, "
-        "personalized cold email.\n\n"
+        "You are a senior B2B sales executive writing a formal, high-quality outreach email.\n\n"
         "Rules:\n"
-        "1. Start with a subject line on the first line (format: Subject: [Your Subject])\n"
-        "2. Explicitly reference at least one growth signal in the opening\n"
-        "3. NO placeholders like [Name], [Company], [Your Name] — write real text\n"
-        "4. Feels human and conversational — not templated\n"
-        "5. Maximum 120 words for the body\n"
-        "6. End with a low-friction CTA (e.g. 'Would a 15-min chat be worth it?')\n"
-        "7. Sign off exactly with the following two lines at the very end:\n"
-        "regards,\n"
-        "parth\n\n"
-        "Return the complete email including subject line.\n\n"
-        f"Recipient email: {email}\n\n"
+        "1. First line must be the subject line in this exact format: Subject: <subject text>\n"
+        "2. Open with 'Dear [relevant title or team],'\n"
+        "3. First sentence: reference a specific growth signal naturally and professionally\n"
+        "4. Second paragraph: use the value proposition to connect that signal to a clear business problem\n"
+        "5. Third paragraph: one crisp, low-friction CTA\n"
+        "6. NO placeholders — write complete, real sentences\n"
+        "7. Formal but confident — no fluff, no filler\n"
+        "8. Body must not exceed 130 words\n"
+        f"9. Close with exactly:\n{sign_off}\n\n"
+        "Return only the complete email. No commentary.\n\n"
+        f"{icp_line}"
         f"Account Brief:\n{account_brief}\n\n"
         f"Growth Signals:\n{signals_text}"
     )
@@ -227,13 +349,11 @@ async def tool_outreach_automated_sender(
         model=LLM_MODEL,
         messages=[{"role": "user", "content": prompt}],
         temperature=0.7,
-        max_tokens=400,
+        max_tokens=450,
     )
 
-    email_content = response.choices[0].message.content or ""
-    email_content = email_content.strip()
+    email_content = (response.choices[0].message.content or "").strip()
 
-    # Parse out the Subject from the body
     subject = "Outreach from FireReach"
     body = email_content
     lines = email_content.split("\n", 1)
@@ -241,34 +361,40 @@ async def tool_outreach_automated_sender(
         subject = lines[0][8:].strip()
         body = lines[1].strip() if len(lines) > 1 else body
 
-    # Actually send the email using Resend API (HTTP-based, won't be blocked by Render)
-    resend_api_key = os.getenv("RESEND_API_KEY")
+    if not send_immediately:
+        return {"status": "draft", "email_subject": subject, "email_content": email_content}
 
-    if resend_api_key:
-        import resend
-        resend.api_key = resend_api_key
+    smtp_email = os.getenv("SMTP_EMAIL")
+    smtp_password = os.getenv("SMTP_PASSWORD")
+
+    if smtp_email and smtp_password:
+        import smtplib
+        from email.mime.multipart import MIMEMultipart
+        from email.mime.text import MIMEText
+
         try:
-            # Note: Unless you have a verified custom domain in Resend, 
-            # you must use "onboarding@resend.dev" as the sender.
-            # And you can only send TO the email address associated with your Resend account.
-            r = resend.Emails.send({
-                "from": "onboarding@resend.dev",
-                "to": "parthwadhwa15@gmail.com",  # Forced to the verified email for free tier demo
-                "subject": subject,
-                "html": f"<p>{body.replace(chr(10), '<br>')}</p>",
-            })
-            logger.info("  Email successfully sent via Resend API: %s", r)
-        except Exception as e:
-            logger.error("  Failed to send email via Resend: %s", e)
+            msg = MIMEMultipart("alternative")
+            msg["Subject"] = subject
+            msg["From"] = smtp_email
+            msg["To"] = email
+            msg.attach(MIMEText(body, "plain"))
+
+            with smtplib.SMTP("smtp.gmail.com", 587) as server:
+                server.ehlo()
+                server.starttls()
+                server.login(smtp_email, smtp_password)
+                server.sendmail(smtp_email, email, msg.as_string())
+
+            logger.info("  Email sent via SMTP to %s", email)
+        except Exception as exc:
+            logger.error("  SMTP send failed: %s", exc)
             return {
                 "status": "failed_to_send",
+                "email_subject": subject,
                 "email_content": email_content,
-                "error": str(e)
+                "error": str(exc),
             }
     else:
-        logger.warning("  RESEND_API_KEY not set. Skipping actual email dispatch.")
+        logger.warning("  SMTP credentials not set. Skipping dispatch.")
 
-    return {
-        "status": "sent",
-        "email_content": email_content,
-    }
+    return {"status": "sent", "email_subject": subject, "email_content": email_content}
