@@ -2,7 +2,7 @@
 
 Autonomous signal-driven outreach engine. Captures live buyer signals for a target company, reasons through them against your ICP, and sends a hyper-personalized cold email — all in one agent loop.
 
-Built with **FastAPI · Groq (Llama 3.3) · Next.js · Groq Function Calling**
+Built with **FastAPI · Groq (Llama 3.3) · Tavily Search API · Next.js · Groq Function Calling**
 
 ---
 
@@ -16,7 +16,7 @@ The agent uses Groq's function calling API. The LLM decides which tool to call a
 
 | Step | Tool | What it does |
 |------|------|--------------|
-| 1 | `tool_signal_harvester` | Fetches live growth signals from Google News, DuckDuckGo, Reddit, GitHub, and Wikipedia — no LLM involved |
+| 1 | `tool_signal_harvester` | Fetches live growth signals via Tavily Search API (news + general web), then cleans them into buyer-intent signals via LLM |
 | 2 | `tool_research_analyst` | Adapts your base ICP to this specific company's signals and writes a 2-paragraph account brief |
 | 3 | `tool_outreach_automated_sender` | Writes a personalized cold email using the adapted ICP and sends it via SMTP |
 
@@ -24,7 +24,7 @@ The agent uses Groq's function calling API. The LLM decides which tool to call a
 
 ## Features
 
-- **Live signal harvesting** — Google News RSS, DuckDuckGo, Reddit JSON API, GitHub public org API, LinkedIn job postings, X (Twitter) social mentions (via DuckDuckGo index), Wikipedia summary API
+- **Live signal harvesting** — Tavily Search API (news + general search), with source-level tagging inferred from result URLs (e.g. Reuters, TechCrunch, LinkedIn, Reddit, GitHub, etc.)
 - **Smart ICP adaptation** — AI rewrites your base ICP into a company-specific value proposition based on live signals
 - **Batch mode** — run the full pipeline against multiple companies at once, each with their own recipient email
 - **Review before sending** — generate a draft first, edit it, then send
@@ -43,6 +43,7 @@ The agent uses Groq's function calling API. The LLM decides which tool to call a
 - Python 3.10+
 - Node.js 18+
 - [Groq API key](https://console.groq.com/) (free tier is sufficient)
+- [Tavily API key](https://app.tavily.com/) (free tier: 1,000 credits/month)
 - Gmail account with an [App Password](https://myaccount.google.com/apppasswords) enabled
 
 ### 1. Clone and set up the backend
@@ -67,6 +68,7 @@ cp .env.example backend/.env
 | Variable | Description |
 |----------|-------------|
 | `GROQ_API_KEY` | From [console.groq.com](https://console.groq.com/) |
+| `TAVILY_API_KEY` | From [app.tavily.com](https://app.tavily.com/) |
 | `SMTP_EMAIL` | Your Gmail address |
 | `SMTP_PASSWORD` | Gmail App Password (not your account password) |
 
@@ -120,7 +122,7 @@ fireReach/
 | Email dispatch | smtplib — Gmail SMTP with STARTTLS |
 | Frontend | Next.js 15 (App Router) |
 | Schemas | Pydantic v2 |
-| Signal sources | Google News · DuckDuckGo · Reddit · GitHub · LinkedIn · X (Twitter) · Wikipedia |
+| Signal sources | Tavily Search API (news + general) · Wikipedia fallback |
 
 ---
 

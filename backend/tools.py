@@ -3,23 +3,32 @@ from __future__ import annotations
 import logging
 import os
 import re
+from urllib.parse import urlparse
 
-import httpx
 from groq import AsyncGroq
+from tavily import TavilyClient
 
 
 logger = logging.getLogger("firereach.tools")
 
 _llm_client: AsyncGroq | None = None
+_tavily_client: TavilyClient | None = None
 LLM_MODEL = "llama-3.3-70b-versatile"
 
-_SIGNAL_QUERIES = [
-    "{company} funding",
-    "{company} hiring",
-    "{company} expansion",
-    "{company} leadership change",
-    "{company} product launch",
-]
+_SOURCE_DOMAIN_MAP = {
+    "reddit.com": "Reddit",
+    "github.com": "GitHub",
+    "linkedin.com": "LinkedIn",
+    "x.com": "X (Twitter)",
+    "twitter.com": "X (Twitter)",
+    "news.google.com": "Google News",
+    "reuters.com": "Reuters",
+    "bloomberg.com": "Bloomberg",
+    "techcrunch.com": "TechCrunch",
+    "crunchbase.com": "Crunchbase",
+    "forbes.com": "Forbes",
+    "wikipedia.org": "Wikipedia",
+}
 
 
 def _get_llm_client() -> AsyncGroq:
@@ -35,164 +44,28 @@ def _get_llm_client() -> AsyncGroq:
     return _llm_client
 
 
-async def _fetch_google_news(company_name: str) -> tuple[list[str], list[str]]:
-    signals: list[str] = []
-    sources: list[str] = []
-    try:
-        async with httpx.AsyncClient(timeout=10) as http:
-            rss_url = (
-                "https://news.google.com/rss/search"
-                f"?q={company_name}+funding+OR+hiring+OR+launch+OR+expansion"
-                "&hl=en-US&gl=US&ceid=US:en"
+def _get_tavily_client() -> TavilyClient:
+    global _tavily_client
+    if _tavily_client is None:
+        api_key = os.getenv("TAVILY_API_KEY")
+        if not api_key:
+            raise RuntimeError(
+                "TAVILY_API_KEY environment variable is not set. "
+                "Get a free key at https://app.tavily.com/"
             )
-            resp = await http.get(rss_url)
-            if resp.status_code == 200:
-                titles = re.findall(r"<title>(.*?)</title>", resp.text)
-                for title in titles[1:8]:
-                    cleaned = title.strip()
-                    if cleaned and company_name.lower() in cleaned.lower():
-                        signals.append(cleaned)
-                        sources.append("Google News")
-    except Exception as exc:
-        logger.debug("Google News RSS failed: %s", exc)
-    return signals, sources
+        _tavily_client = TavilyClient(api_key=api_key)
+    return _tavily_client
 
 
-async def _fetch_duckduckgo(company_name: str) -> tuple[list[str], list[str]]:
-    signals: list[str] = []
-    sources: list[str] = []
+def _source_from_url(url: str) -> str:
     try:
-        async with httpx.AsyncClient(timeout=10) as http:
-            for query_template in _SIGNAL_QUERIES:
-                query = query_template.format(company=company_name)
-                resp = await http.get(
-                    f"https://html.duckduckgo.com/html/?q={query}",
-                    headers={"User-Agent": "Mozilla/5.0 (FireReach Bot)"},
-                )
-                if resp.status_code == 200:
-                    snippets = re.findall(
-                        r'class="result__snippet">(.*?)</a>', resp.text, re.DOTALL
-                    )
-                    for snippet in snippets[:2]:
-                        clean = re.sub(r"<.*?>", "", snippet).strip()
-                        if clean and len(clean) > 20:
-                            signals.append(clean)
-                            sources.append("DuckDuckGo")
-                if len(signals) >= 5:
-                    break
-    except Exception as exc:
-        logger.debug("DuckDuckGo scrape failed: %s", exc)
-    return signals, sources
-
-
-async def _fetch_reddit(company_name: str) -> tuple[list[str], list[str]]:
-    signals: list[str] = []
-    sources: list[str] = []
-    try:
-        async with httpx.AsyncClient(timeout=10) as http:
-            resp = await http.get(
-                "https://www.reddit.com/search.json",
-                params={"q": company_name, "sort": "new", "limit": 5, "type": "link"},
-                headers={"User-Agent": "FireReach/1.0 (signal harvester)"},
-            )
-            if resp.status_code == 200:
-                data = resp.json()
-                for post in data.get("data", {}).get("children", [])[:5]:
-                    title = post["data"].get("title", "")
-                    if company_name.lower() in title.lower() and len(title) > 20:
-                        signals.append(title)
-                        sources.append("Reddit")
-    except Exception as exc:
-        logger.debug("Reddit fetch failed: %s", exc)
-    return signals, sources
-
-
-async def _fetch_github(company_name: str) -> tuple[list[str], list[str]]:
-    signals: list[str] = []
-    sources: list[str] = []
-    try:
-        slug = re.sub(r"[^a-z0-9-]", "", company_name.lower().replace(" ", "-"))
-        async with httpx.AsyncClient(
-            timeout=10,
-            headers={"User-Agent": "FireReach/1.0", "Accept": "application/vnd.github+json"},
-        ) as http:
-            resp = await http.get(f"https://api.github.com/orgs/{slug}")
-            if resp.status_code == 200:
-                data = resp.json()
-                pub_repos = data.get("public_repos", 0)
-                followers = data.get("followers", 0)
-                if pub_repos > 0:
-                    signals.append(f"{company_name} has {pub_repos} public repositories on GitHub")
-                    sources.append("GitHub")
-                if followers > 50:
-                    signals.append(f"{company_name} GitHub org has {followers:,} followers")
-                    sources.append("GitHub")
-    except Exception as exc:
-        logger.debug("GitHub fetch failed: %s", exc)
-    return signals, sources
-
-
-async def _fetch_social_mentions(company_name: str) -> tuple[list[str], list[str]]:
-    signals: list[str] = []
-    sources: list[str] = []
-    try:
-        async with httpx.AsyncClient(timeout=10) as http:
-            resp = await http.get(
-                f"https://html.duckduckgo.com/html/?q={company_name}+site:x.com",
-                headers={"User-Agent": "Mozilla/5.0 (FireReach Bot)"},
-            )
-            if resp.status_code == 200:
-                snippets = re.findall(
-                    r'class="result__snippet">(.*?)</a>', resp.text, re.DOTALL
-                )
-                for snippet in snippets[:3]:
-                    clean = re.sub(r"<.*?>", "", snippet).strip()
-                    if clean and len(clean) > 20:
-                        signals.append(clean)
-                        sources.append("X (Twitter)")
-    except Exception as exc:
-        logger.debug("Social mentions fetch failed: %s", exc)
-    return signals, sources
-
-
-async def _fetch_linkedin(company_name: str) -> tuple[list[str], list[str]]:
-    signals: list[str] = []
-    sources: list[str] = []
-    try:
-        async with httpx.AsyncClient(timeout=10) as http:
-            resp = await http.get(
-                f"https://html.duckduckgo.com/html/?q={company_name}+site:linkedin.com/jobs",
-                headers={"User-Agent": "Mozilla/5.0 (FireReach Bot)"},
-            )
-            if resp.status_code == 200:
-                snippets = re.findall(
-                    r'class="result__snippet">(.*?)</a>', resp.text, re.DOTALL
-                )
-                for snippet in snippets[:3]:
-                    clean = re.sub(r"<.*?>", "", snippet).strip()
-                    if clean and len(clean) > 20:
-                        signals.append(clean)
-                        sources.append("LinkedIn")
-    except Exception as exc:
-        logger.debug("LinkedIn fetch failed: %s", exc)
-    return signals, sources
-
-
-async def _fetch_wikipedia(company_name: str) -> str:
-    try:
-        async with httpx.AsyncClient(timeout=8) as http:
-            resp = await http.get(
-                f"https://en.wikipedia.org/api/rest_v1/page/summary/{company_name}",
-                headers={"User-Agent": "FireReach/1.0"},
-            )
-            if resp.status_code == 200:
-                data = resp.json()
-                extract = data.get("extract", "")
-                sentences = [s.strip() for s in extract.split(". ") if s.strip()]
-                return ". ".join(sentences[:3]) + "." if sentences else ""
-    except Exception as exc:
-        logger.debug("Wikipedia fetch failed: %s", exc)
-    return ""
+        domain = urlparse(url).netloc.lower().removeprefix("www.")
+        for pattern, label in _SOURCE_DOMAIN_MAP.items():
+            if pattern in domain:
+                return label
+        return domain.split(".")[0].capitalize()
+    except Exception:
+        return "Web"
 
 
 async def _clean_signals(company_name: str, raw_signals: list[str]) -> list[str]:
@@ -224,72 +97,120 @@ async def _clean_signals(company_name: str, raw_signals: list[str]) -> list[str]
     cleaned = []
     text = response.choices[0].message.content or ""
     for line in text.strip().split("\n"):
-        line = re.sub(r"^\d+[\.\)]\s*", "", line.strip()).lstrip("•-* ")
+        line = re.sub(r"^\d+[\.\\)]\s*", "", line.strip()).lstrip("•-* ")
         if len(line) >= 10 and company_name.lower() in line.lower():
             cleaned.append(line)
     return cleaned[:5]
 
 
 async def tool_signal_harvester(company_name: str) -> dict:
+    tavily = _get_tavily_client()
     all_raw: list[str] = []
-    all_raw_sources: list[str] = []
+    all_sources: list[str] = []
+    news_resp: dict = {}
+    general_resp: dict = {}
 
-    logger.info("  Querying Google News for %s", company_name)
-    sigs, srcs = await _fetch_google_news(company_name)
-    all_raw.extend(sigs)
-    all_raw_sources.extend(srcs)
+    # --- Tavily news search: recent buyer signals ---
+    logger.info("  Tavily news search for %s", company_name)
+    try:
+        news_resp = tavily.search(
+            query=f"{company_name} funding OR hiring OR expansion OR product launch OR partnership",
+            topic="news",
+            time_range="month",
+            max_results=10,
+            include_answer=True,
+        )
+        for result in news_resp.get("results", []):
+            title = result.get("title", "").strip()
+            content = result.get("content", "").strip()
+            url = result.get("url", "")
+            source = _source_from_url(url)
 
-    if len(all_raw) < 3:
-        logger.info("  Querying DuckDuckGo for %s", company_name)
-        sigs, srcs = await _fetch_duckduckgo(company_name)
-        all_raw.extend(sigs)
-        all_raw_sources.extend(srcs)
+            if title and company_name.lower() in title.lower():
+                all_raw.append(title)
+                all_sources.append(source)
+            elif content and len(content) > 20:
+                snippet = content[:150].rsplit(" ", 1)[0]
+                all_raw.append(snippet)
+                all_sources.append(source)
+    except Exception as exc:
+        logger.warning("  Tavily news search failed: %s", exc)
 
-    logger.info("  Querying Reddit for %s", company_name)
-    sigs, srcs = await _fetch_reddit(company_name)
-    all_raw.extend(sigs)
-    all_raw_sources.extend(srcs)
+    # --- Tavily general search: broader context ---
+    logger.info("  Tavily general search for %s", company_name)
+    try:
+        general_resp = tavily.search(
+            query=f"{company_name} growth strategy leadership recent developments",
+            search_depth="advanced",
+            max_results=5,
+            include_answer=True,
+        )
+        for result in general_resp.get("results", []):
+            title = result.get("title", "").strip()
+            content = result.get("content", "").strip()
+            url = result.get("url", "")
+            source = _source_from_url(url)
 
-    logger.info("  Querying GitHub for %s", company_name)
-    gh_sigs, gh_srcs = await _fetch_github(company_name)
+            text = title if (title and company_name.lower() in title.lower()) else ""
+            if not text and content and len(content) > 20:
+                text = content[:150].rsplit(" ", 1)[0]
 
-    logger.info("  Querying LinkedIn for %s", company_name)
-    li_sigs, li_srcs = await _fetch_linkedin(company_name)
+            if text and text.lower() not in {s.lower() for s in all_raw}:
+                all_raw.append(text)
+                all_sources.append(source)
+    except Exception as exc:
+        logger.warning("  Tavily general search failed: %s", exc)
 
-    logger.info("  Querying social mentions for %s", company_name)
-    sm_sigs, sm_srcs = await _fetch_social_mentions(company_name)
-
+    # --- Deduplicate ---
     seen: set[str] = set()
     unique_raw, unique_srcs = [], []
-    for s, src in zip(all_raw, all_raw_sources):
+    for s, src in zip(all_raw, all_sources):
         key = s.lower().strip()
         if key not in seen:
             seen.add(key)
             unique_raw.append(s)
             unique_srcs.append(src)
 
-    unique_raw = unique_raw[:8]
+    unique_raw = unique_raw[:10]
+    logger.info("  %d unique raw signal(s) collected", len(unique_raw))
 
+    # --- Clean signals via LLM ---
     logger.info("  Cleaning %d raw signal(s)", len(unique_raw))
     cleaned = await _clean_signals(company_name, unique_raw)
-
-    for s, src in zip(gh_sigs + li_sigs + sm_sigs, gh_srcs + li_srcs + sm_srcs):
-        if s.lower() not in seen and len(cleaned) < 5:
-            seen.add(s.lower())
-            cleaned.append(s)
-            unique_srcs.append(src)
-
     cleaned = cleaned[:5]
 
+    # --- Collect unique source labels ---
     sources_used: list[str] = []
-    for src in unique_srcs + gh_srcs + li_srcs + sm_srcs:
+    for src in unique_srcs:
         if src not in sources_used:
             sources_used.append(src)
 
-    logger.info("  %d signal(s) from: %s", len(cleaned), ", ".join(sources_used) or "web")
+    logger.info("  %d signal(s) from: %s", len(cleaned), ", ".join(sources_used) or "Tavily")
 
-    logger.info("  Fetching Wikipedia facts for %s", company_name)
-    wiki_facts = await _fetch_wikipedia(company_name)
+    # --- Wiki facts from Tavily answer or Wikipedia API fallback ---
+    wiki_facts = ""
+    for resp in [news_resp, general_resp]:
+        answer = resp.get("answer", "")
+        if answer and len(answer) > 50:
+            wiki_facts = answer
+            break
+
+    if not wiki_facts:
+        logger.info("  Falling back to Wikipedia API for %s", company_name)
+        try:
+            import httpx
+            async with httpx.AsyncClient(timeout=8) as http:
+                resp = await http.get(
+                    f"https://en.wikipedia.org/api/rest_v1/page/summary/{company_name}",
+                    headers={"User-Agent": "FireReach/1.0"},
+                )
+                if resp.status_code == 200:
+                    data = resp.json()
+                    extract = data.get("extract", "")
+                    sentences = [s.strip() for s in extract.split(". ") if s.strip()]
+                    wiki_facts = ". ".join(sentences[:3]) + "." if sentences else ""
+        except Exception as exc:
+            logger.debug("  Wikipedia fallback failed: %s", exc)
 
     return {
         "company": company_name,
@@ -355,6 +276,49 @@ async def tool_research_analyst(
     return {"adapted_icp": adapted_icp, "account_brief": account_brief}
 
 
+def _build_html_email(body_text: str, sender_name: str, sender_role: str, sender_company: str) -> str:
+    paragraphs = [p.strip() for p in body_text.split("\n") if p.strip()]
+
+    body_html_parts = []
+    sign_off_started = False
+
+    for para in paragraphs:
+        if para.lower().startswith(("best regards", "kind regards", "warm regards", "sincerely", "cheers")):
+            sign_off_started = True
+
+        if sign_off_started:
+            body_html_parts.append(
+                f'<p style="margin:0 0 2px 0;font-size:15px;line-height:1.5;color:#1d1d1f;">{para}</p>'
+            )
+        else:
+            body_html_parts.append(
+                f'<p style="margin:0 0 18px 0;font-size:15px;line-height:1.7;color:#1d1d1f;">{para}</p>'
+            )
+
+    body_html = "\n".join(body_html_parts)
+
+    return f"""\
+<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"></head>
+<body style="margin:0;padding:0;background-color:#f5f5f7;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','Helvetica Neue',Arial,sans-serif;">
+  <table width="100%" cellpadding="0" cellspacing="0" style="background-color:#f5f5f7;padding:32px 16px;">
+    <tr>
+      <td align="center">
+        <table width="100%" cellpadding="0" cellspacing="0" style="max-width:560px;background-color:#ffffff;border-radius:12px;overflow:hidden;">
+          <tr>
+            <td style="padding:36px 36px 32px 36px;">
+              {body_html}
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>"""
+
+
 async def tool_outreach_automated_sender(
     email: str,
     account_brief: str,
@@ -381,17 +345,25 @@ async def tool_outreach_automated_sender(
 
     prompt = (
         "You are a senior B2B sales executive writing a formal, high-quality outreach email.\n\n"
+        "Structure (each section MUST be separated by a blank line):\n"
+        "1. First line: Subject: <concise, professional subject>\n"
+        "2. Blank line\n"
+        "3. Greeting: Dear [relevant title or team],\n"
+        "4. Blank line\n"
+        "5. Opening paragraph (2-3 sentences): reference a specific growth signal naturally\n"
+        "6. Blank line\n"
+        "7. Value paragraph (2-3 sentences): connect the signal to a clear business problem "
+        "and position your solution\n"
+        "8. Blank line\n"
+        "9. CTA paragraph (1-2 sentences): one crisp, low-friction call to action\n"
+        "10. Blank line\n"
+        f"11. Sign-off (exactly):\n{sign_off}\n\n"
         "Rules:\n"
-        "1. First line must be the subject line in this exact format: Subject: <subject text>\n"
-        "2. Open with 'Dear [relevant title or team],'\n"
-        "3. First sentence: reference a specific growth signal naturally and professionally\n"
-        "4. Second paragraph: use the value proposition to connect that signal to a clear business problem\n"
-        "5. Third paragraph: one crisp, low-friction CTA\n"
-        "6. NO placeholders — write complete, real sentences\n"
-        "7. Formal but confident — no fluff, no filler\n"
-        "8. Body must not exceed 130 words\n"
-        f"9. Close with exactly:\n{sign_off}\n\n"
-        "Return only the complete email. No commentary.\n\n"
+        "- NO placeholders — write complete, real sentences\n"
+        "- Formal but confident — no fluff, no filler\n"
+        "- Body must not exceed 130 words (excluding subject and sign-off)\n"
+        "- ALWAYS separate paragraphs with a blank line\n"
+        "- Return only the complete email. No commentary.\n\n"
         f"{icp_line}"
         f"Account Brief:\n{account_brief}\n\n"
         f"Growth Signals:\n{signals_text}"
@@ -401,17 +373,25 @@ async def tool_outreach_automated_sender(
         model=LLM_MODEL,
         messages=[{"role": "user", "content": prompt}],
         temperature=0.7,
-        max_tokens=450,
+        max_tokens=500,
     )
 
     email_content = (response.choices[0].message.content or "").strip()
 
     subject = "Outreach from FireReach"
-    body = email_content
-    lines = email_content.split("\n", 1)
-    if lines and lines[0].lower().startswith("subject:"):
-        subject = lines[0][8:].strip()
-        body = lines[1].strip() if len(lines) > 1 else body
+    body_lines = email_content.split("\n")
+    subject_idx = -1
+
+    for i, line in enumerate(body_lines[:5]):
+        if line.strip().lower().startswith("subject:"):
+            subject = line.strip()[8:].strip()
+            subject_idx = i
+            break
+
+    if subject_idx >= 0:
+        body = "\n".join(body_lines[subject_idx + 1:]).strip()
+    else:
+        body = email_content
 
     if not send_immediately:
         return {"status": "draft", "email_subject": subject, "email_content": email_content}
@@ -425,11 +405,14 @@ async def tool_outreach_automated_sender(
         from email.mime.text import MIMEText
 
         try:
+            html_body = _build_html_email(body, sender_name, sender_role, sender_company)
+
             msg = MIMEMultipart("alternative")
             msg["Subject"] = subject
             msg["From"] = smtp_email
             msg["To"] = email
             msg.attach(MIMEText(body, "plain"))
+            msg.attach(MIMEText(html_body, "html"))
 
             with smtplib.SMTP("smtp.gmail.com", 587) as server:
                 server.ehlo()

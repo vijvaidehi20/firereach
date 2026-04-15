@@ -130,6 +130,8 @@ async def run_agent_stream(req: AgentRequest):
     )
 
 
+from tools import _build_html_email
+
 @app.post("/send-email")
 async def send_email_endpoint(req: SendEmailRequest):
     smtp_email = os.getenv("SMTP_EMAIL")
@@ -139,11 +141,26 @@ async def send_email_endpoint(req: SendEmailRequest):
         raise HTTPException(status_code=500, detail="SMTP credentials not configured.")
 
     try:
+        body_lines = req.body.split("\n")
+        subject_idx = -1
+        for i, line in enumerate(body_lines[:5]):
+            if line.strip().lower().startswith("subject:"):
+                subject_idx = i
+                break
+                
+        if subject_idx >= 0:
+            final_body = "\n".join(body_lines[subject_idx + 1:]).strip()
+        else:
+            final_body = req.body.strip()
+
+        html_body = _build_html_email(final_body, "", "", "")
+
         msg = MIMEMultipart("alternative")
         msg["Subject"] = req.subject
         msg["From"] = smtp_email
         msg["To"] = req.recipient
-        msg.attach(MIMEText(req.body, "plain"))
+        msg.attach(MIMEText(final_body, "plain"))
+        msg.attach(MIMEText(html_body, "html"))
 
         with smtplib.SMTP("smtp.gmail.com", 587) as server:
             server.ehlo()

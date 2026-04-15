@@ -22,9 +22,10 @@ TOOL_DEFINITIONS = [
         "function": {
             "name": "tool_signal_harvester",
             "description": (
-                "Fetches deterministic live buyer signals for a target company from "
-                "Google News, DuckDuckGo, Reddit, and GitHub. Returns growth signals, "
-                "sources used, and Wikipedia background facts. Must be called first."
+                "Fetches live buyer signals for a target company using Tavily Search API. "
+                "Runs a news search and a general search, then cleans the results into "
+                "actionable growth signals. Returns signals, sources used, and background facts. "
+                "Must be called first."
             ),
             "parameters": {
                 "type": "object",
