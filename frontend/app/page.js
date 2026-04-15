@@ -17,6 +17,7 @@ const SOURCE_COLORS = {
   "Reddit":      "badge-warning",
   "GitHub":      "badge-success",
   "LinkedIn":    "badge-blue",
+  "X (Twitter)": "badge-purple",
 };
 
 const DEFAULT_PERSONA = { sender_name: "Parth", sender_company: "", sender_role: "" };
