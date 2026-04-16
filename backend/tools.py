@@ -74,41 +74,80 @@ async def find_contact_email(company_name: str) -> str:
         logger.warning("TAVILY_API_KEY not set — cannot auto-discover email")
         return ""
 
+    personal_domains = {"gmail.com", "yahoo.com", "hotmail.com", "outlook.com", "icloud.com", "me.com"}
+    noise_prefixes = {"noreply", "no-reply", "support", "privacy", "legal", "press", "media", "abuse", "example", "donotreply"}
+
     try:
         import httpx
+
+        # Step 1: find the company's official domain
+        company_domain = ""
         async with httpx.AsyncClient(timeout=15) as http:
             resp = await http.post(
                 "https://api.tavily.com/search",
                 json={
                     "api_key": tavily_key,
-                    "query": f"{company_name} founder CEO contact email",
+                    "query": f"{company_name} official website",
                     "search_depth": "basic",
                     "max_results": 5,
                 },
             )
+            if resp.status_code == 200:
+                urls = [r.get("url", "") for r in resp.json().get("results", [])]
+                for url in urls:
+                    match = re.search(r'https?://(?:www\.)?([a-z0-9.-]+\.[a-z]{2,})', url)
+                    if match:
+                        domain = match.group(1)
+                        slug = company_name.lower().replace(" ", "").replace("-", "")
+                        if slug in domain.replace(".", "").replace("-", ""):
+                            company_domain = domain
+                            break
+
+        logger.info("  Company domain resolved: %s", company_domain or "unknown")
+
+        # Step 2: search for emails — prefer company domain emails
+        async with httpx.AsyncClient(timeout=15) as http:
+            query = f"{company_name} CEO founder contact email"
+            if company_domain:
+                query += f" site:{company_domain} OR @{company_domain}"
+
+            resp = await http.post(
+                "https://api.tavily.com/search",
+                json={
+                    "api_key": tavily_key,
+                    "query": query,
+                    "search_depth": "advanced",
+                    "max_results": 7,
+                },
+            )
             if resp.status_code != 200:
-                return ""
+                return f"info@{company_domain}" if company_domain else ""
 
-            data = resp.json()
-            content = " ".join(r.get("content", "") for r in data.get("results", []))
-
+            content = " ".join(r.get("content", "") for r in resp.json().get("results", []))
             emails = re.findall(r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b', content)
-            noise = {"noreply", "no-reply", "support", "privacy", "legal", "press", "media", "abuse", "example"}
+
+            # Prefer company-domain emails
+            if company_domain:
+                for email in emails:
+                    prefix = email.split("@")[0].lower()
+                    if email.lower().endswith(f"@{company_domain}") and not any(n in prefix for n in noise_prefixes):
+                        logger.info("  Auto-discovered company email: %s", email)
+                        return email
+
+            # Accept non-personal emails from any domain
             for email in emails:
-                if not any(n in email.lower() for n in noise):
+                domain = email.split("@")[-1].lower()
+                prefix = email.split("@")[0].lower()
+                if domain not in personal_domains and not any(n in prefix for n in noise_prefixes):
                     logger.info("  Auto-discovered email: %s", email)
                     return email
 
-            # Fallback: find company domain and construct info@domain
-            urls = [r.get("url", "") for r in data.get("results", [])]
-            for url in urls:
-                match = re.search(r'https?://(?:www\.)?([a-z0-9.-]+\.[a-z]{2,})', url)
-                if match:
-                    domain = match.group(1)
-                    if company_name.lower().replace(" ", "") in domain.replace("-", ""):
-                        fallback = f"info@{domain}"
-                        logger.info("  Auto-discovered fallback email: %s", fallback)
-                        return fallback
+        # Step 3: fallback to info@company-domain
+        if company_domain:
+            fallback = f"info@{company_domain}"
+            logger.info("  Fallback email: %s", fallback)
+            return fallback
+
     except Exception as exc:
         logger.debug("Email discovery failed: %s", exc)
     return ""
