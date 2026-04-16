@@ -461,6 +461,12 @@ function EmailTab({ result, recipientEmail }) {
               <strong>Send failed</strong>{sendError}
             </div>
           )}
+          {result.recipient_email && (
+            <div className="email-subject-row" style={{ marginBottom: 4 }}>
+              To: <strong>{result.recipient_email}</strong>
+              {!recipientEmail && <span className="badge badge-blue" style={{ marginLeft: 8 }}>Auto-discovered</span>}
+            </div>
+          )}
           {result.email_subject && (
             <div className="email-subject-row">
               Subject: <strong>{result.email_subject}</strong>
@@ -628,7 +634,7 @@ export default function Home() {
   }
 
   const canSubmit = form.icp.trim() &&
-    (batchMode ? batchCompanies.trim() : form.company.trim() && form.email.trim());
+    (batchMode ? batchCompanies.trim() : form.company.trim());
 
   async function runSingleStream(company, email) {
     const res = await fetch(`${API_URL}/run-agent-stream`, {
@@ -710,11 +716,6 @@ export default function Home() {
       const results = [];
       for (let i = 0; i < entries.length; i++) {
         const { company, email } = entries[i];
-        if (!email) {
-          results.push({ company, email: "", data: null, error: "Missing email — use format: Company, email@example.com" });
-          setBatchResults([...results]);
-          continue;
-        }
         setBatchProgress({ current: i + 1, total: entries.length });
         setActiveStep("signals");
         try {
@@ -846,7 +847,7 @@ export default function Home() {
 
                 {tab === "signals" && <SignalsTab result={result} />}
                 {tab === "research" && <ResearchTab result={result} />}
-                {tab === "email" && <EmailTab result={result} recipientEmail={form.email} />}
+                {tab === "email" && <EmailTab result={result} recipientEmail={result.recipient_email || form.email} />}
               </>
             )}
 
@@ -884,9 +885,9 @@ export default function Home() {
 
               {batchMode ? (
                 <div className="field">
-                  <label>Companies & Emails <span style={{ fontWeight: 400, color: "var(--text-muted)" }}>(one per line: Company, email)</span></label>
+                  <label>Companies <span style={{ fontWeight: 400, color: "var(--text-muted)" }}>(one per line — email optional: Company, email)</span></label>
                   <textarea
-                    placeholder={"Stripe, cto@stripe.com\nFigma, founder@figma.com\nNotion, sales@notion.so"}
+                    placeholder={"Stripe, cto@stripe.com\nFigma\nNotion, sales@notion.so"}
                     value={batchCompanies}
                     onChange={(e) => setBatchCompanies(e.target.value)}
                     disabled={loading}
@@ -905,9 +906,9 @@ export default function Home() {
                     />
                   </div>
                   <div className="field">
-                    <label>Recipient Email</label>
+                    <label>Recipient Email <span style={{ fontWeight: 400, color: "var(--text-muted)" }}>(optional — leave blank to auto-discover)</span></label>
                     <input
-                      type="email" placeholder="founder@example.com"
+                      type="email" placeholder="Auto-discover from web"
                       value={form.email} onChange={handleChange("email")}
                       disabled={loading}
                     />

@@ -7,7 +7,7 @@ from pydantic import BaseModel, Field
 class AgentRequest(BaseModel):
     icp: str = Field(..., description="Ideal Customer Profile")
     company: str = Field(..., description="Target company name")
-    email: str = Field(..., description="Recipient email address")
+    email: str = Field(default="", description="Recipient email — leave blank to auto-discover")
     sender_name: str = Field(default="Parth", description="Sender's full name")
     sender_company: str = Field(default="", description="Sender's company name")
     sender_role: str = Field(default="", description="Sender's job title/role")
@@ -26,6 +26,7 @@ class AgentResponse(BaseModel):
     wiki_facts: str = ""
     adapted_icp: str = ""
     account_brief: str = ""
+    recipient_email: str = ""
     email_subject: str = ""
     email_content: str = ""
-    email_status: str = "sent"  # "sent" | "draft" | "failed_to_send"
+    email_status: str = "sent"

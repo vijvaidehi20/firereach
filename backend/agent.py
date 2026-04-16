@@ -7,7 +7,7 @@ from collections.abc import Awaitable, Callable
 
 from groq import AsyncGroq
 
-from tools import tool_signal_harvester, tool_research_analyst, tool_outreach_automated_sender
+from tools import tool_signal_harvester, tool_research_analyst, tool_outreach_automated_sender, find_contact_email
 from prompts import SYSTEM_PROMPT, build_user_prompt
 from schemas import AgentResponse
 
@@ -141,6 +141,13 @@ async def run_agent(
         },
     ]
 
+    if not email:
+        logger.info("No email provided — auto-discovering for %s", company)
+        email = await find_contact_email(company)
+        if not email:
+            raise RuntimeError(f"Could not auto-discover a contact email for {company}. Please provide one manually.")
+        logger.info("Using auto-discovered email: %s", email)
+
     signals: list[str] = []
     sources_used: list[str] = []
     wiki_facts: str = ""
@@ -243,6 +250,7 @@ async def run_agent(
         wiki_facts=wiki_facts,
         adapted_icp=adapted_icp,
         account_brief=account_brief,
+        recipient_email=email,
         email_subject=email_subject,
         email_content=email_content,
         email_status=email_status,

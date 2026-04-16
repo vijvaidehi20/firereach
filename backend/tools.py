@@ -68,6 +68,52 @@ def _source_from_url(url: str) -> str:
         return "Web"
 
 
+async def find_contact_email(company_name: str) -> str:
+    tavily_key = os.getenv("TAVILY_API_KEY")
+    if not tavily_key:
+        logger.warning("TAVILY_API_KEY not set — cannot auto-discover email")
+        return ""
+
+    try:
+        import httpx
+        async with httpx.AsyncClient(timeout=15) as http:
+            resp = await http.post(
+                "https://api.tavily.com/search",
+                json={
+                    "api_key": tavily_key,
+                    "query": f"{company_name} founder CEO contact email",
+                    "search_depth": "basic",
+                    "max_results": 5,
+                },
+            )
+            if resp.status_code != 200:
+                return ""
+
+            data = resp.json()
+            content = " ".join(r.get("content", "") for r in data.get("results", []))
+
+            emails = re.findall(r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b', content)
+            noise = {"noreply", "no-reply", "support", "privacy", "legal", "press", "media", "abuse", "example"}
+            for email in emails:
+                if not any(n in email.lower() for n in noise):
+                    logger.info("  Auto-discovered email: %s", email)
+                    return email
+
+            # Fallback: find company domain and construct info@domain
+            urls = [r.get("url", "") for r in data.get("results", [])]
+            for url in urls:
+                match = re.search(r'https?://(?:www\.)?([a-z0-9.-]+\.[a-z]{2,})', url)
+                if match:
+                    domain = match.group(1)
+                    if company_name.lower().replace(" ", "") in domain.replace("-", ""):
+                        fallback = f"info@{domain}"
+                        logger.info("  Auto-discovered fallback email: %s", fallback)
+                        return fallback
+    except Exception as exc:
+        logger.debug("Email discovery failed: %s", exc)
+    return ""
+
+
 async def _clean_signals(company_name: str, raw_signals: list[str]) -> list[str]:
     if not raw_signals:
         return []
@@ -341,7 +387,13 @@ async def tool_outreach_automated_sender(
     elif sender_company:
         sign_off += f"\n{sender_company}"
 
-    icp_line = f"Value Proposition: {adapted_icp}\n\n" if adapted_icp else ""
+    sender_context = ""
+    if sender_company and adapted_icp:
+        sender_context = f"Sender's Company: {sender_company}\nWhat We Do: {adapted_icp}\n\n"
+    elif sender_company:
+        sender_context = f"Sender's Company: {sender_company}\n\n"
+    elif adapted_icp:
+        sender_context = f"What We Do: {adapted_icp}\n\n"
 
     prompt = (
         "You are a senior B2B sales executive writing a formal, high-quality outreach email.\n\n"
@@ -352,19 +404,20 @@ async def tool_outreach_automated_sender(
         "4. Blank line\n"
         "5. Opening paragraph (2-3 sentences): reference a specific growth signal naturally\n"
         "6. Blank line\n"
-        "7. Value paragraph (2-3 sentences): connect the signal to a clear business problem "
-        "and position your solution\n"
+        "7. Value paragraph (2-3 sentences): explicitly name the sender's company and explain "
+        "how their solution addresses a clear pain point revealed by the signals\n"
         "8. Blank line\n"
         "9. CTA paragraph (1-2 sentences): one crisp, low-friction call to action\n"
         "10. Blank line\n"
         f"11. Sign-off (exactly):\n{sign_off}\n\n"
         "Rules:\n"
         "- NO placeholders — write complete, real sentences\n"
+        "- The sender's company name MUST appear in the value paragraph\n"
         "- Formal but confident — no fluff, no filler\n"
-        "- Body must not exceed 130 words (excluding subject and sign-off)\n"
+        "- Body must not exceed 140 words (excluding subject and sign-off)\n"
         "- ALWAYS separate paragraphs with a blank line\n"
         "- Return only the complete email. No commentary.\n\n"
-        f"{icp_line}"
+        f"{sender_context}"
         f"Account Brief:\n{account_brief}\n\n"
         f"Growth Signals:\n{signals_text}"
     )
