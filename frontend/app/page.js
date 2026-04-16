@@ -139,13 +139,6 @@ function CloseIcon() {
   );
 }
 
-function BackIcon() {
-  return (
-    <svg width="13" height="13" viewBox="0 0 13 13" fill="none">
-      <path d="M8.5 2L4 6.5 8.5 11" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-    </svg>
-  );
-}
 
 // ── Settings Modal ────────────────────────────────────────────────────────
 
@@ -513,7 +506,14 @@ function BatchResultCard({ item }) {
       <div className="batch-result-header">
         <div>
           <span className="batch-result-company">{item.company}</span>
-          {item.email && <span className="text-muted" style={{ marginLeft: 8, fontSize: 12 }}>{item.email}</span>}
+          {(item.email || item.data?.recipient_email) && (
+            <span className="text-muted" style={{ marginLeft: 8, fontSize: 12 }}>
+              {item.email || item.data?.recipient_email}
+              {!item.email && item.data?.recipient_email && (
+                <span className="badge badge-blue" style={{ marginLeft: 6, fontSize: 10 }}>Auto</span>
+              )}
+            </span>
+          )}
         </div>
         {item.error
           ? <span className="badge badge-red">Failed</span>
@@ -887,7 +887,7 @@ export default function Home() {
                 <div className="field">
                   <label>Companies <span style={{ fontWeight: 400, color: "var(--text-muted)" }}>(one per line — email optional: Company, email)</span></label>
                   <textarea
-                    placeholder={"Stripe, cto@stripe.com\nFigma\nNotion, sales@notion.so"}
+                    placeholder={"Stripe, cto@stripe.com\nFigma, design@figma.com\nNotion, sales@notion.so"}
                     value={batchCompanies}
                     onChange={(e) => setBatchCompanies(e.target.value)}
                     disabled={loading}
@@ -952,7 +952,11 @@ export default function Home() {
             </div>
 
             <button type="submit" className="btn" disabled={!canSubmit || loading}>
-              {loading ? "Running…" : batchMode ? `Run Agent on ${batchCompanies.split("\n").filter(Boolean).length} companies` : "Run Agent"}
+              {loading ? "Running…" : batchMode
+                ? batchCompanies.trim()
+                  ? `Run Agent on ${batchCompanies.split("\n").filter(Boolean).length} ${batchCompanies.split("\n").filter(Boolean).length === 1 ? "company" : "companies"}`
+                  : "Run Agent"
+                : "Run Agent"}
             </button>
           </form>
 
