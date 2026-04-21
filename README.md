@@ -49,8 +49,6 @@ The agent uses Groq's function calling API. The LLM decides which tool to call a
 ### 1. Clone and set up the backend
 
 ```bash
-cd fireReach
-
 python -m venv venv
 source venv/bin/activate       # macOS / Linux
 # venv\Scripts\activate         # Windows
